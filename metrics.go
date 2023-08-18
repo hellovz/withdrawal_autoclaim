@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// TODO: rework ?
 type Metrics struct {
 	withdrawalsClaimed prometheus.Counter
 	withdrawalsCounter uint64

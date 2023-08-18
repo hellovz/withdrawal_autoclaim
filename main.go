@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"math/big"
 	"os"
 	"os/signal"
 	"strconv"
@@ -25,9 +24,9 @@ var (
 
 	PrivateKey string
 
-	withdrawals Withdrawals
-
 	metrics *Metrics
+
+	db DB
 )
 
 func init() {
@@ -52,101 +51,39 @@ func init() {
 	if BatchSize == 0 {
 		BatchSize = 1000
 	}
-	lastSynced, err = getLastSynced()
-	if err != nil {
-		log.Fatal("no last synced block number provided")
-	}
 
-	withdrawals = make(map[common.Address]struct{}, 0)
 	metrics = NewMetrics()
+	db, err = NewDB()
+	if err != nil {
+		log.Fatal("can't connect to db")
+	}
 }
 
-/*
-Run is the main function of the application, it starts on the application start and runs
-endlessly untill application stops.
-
-Execution may be described in a few steps:
-
- 1. Retry queue goroutine starts in parallel to retry every failed public RPC calls.
-    Every bad response from public RPC being pushed to retry queue channel to reexecute the call.
-
- 2. Syncs to the current head from provided <last_synced> block argument (on application start) collecting all withdrawals.
-
- 3. Additional sync goroutine starts in parallel to sync new blocks every minute.
-
- 4. Claim loop starts to claim withdrawals batches every <provided_time>.
-
-    Every goroutine shares parent context and will stop onse parent context is canceled.
-*/
-func Run(ctx context.Context, client *ethclient.Client) {
-	head, err := client.HeaderByNumber(ctx, nil)
-	if err != nil {
-		log.Fatalf("can't get chain head: %s", err.Error())
-	}
-	retryQ := make(chan uint64)
-	// this function retry every failed block request
-	go func(ctx context.Context) {
-		for {
-			select {
-			case b := <-retryQ:
-				metrics.rpcErrors.Add(float64(1))
-				go processBlock(client, big.NewInt(int64(b)), retryQ)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}(ctx)
-	// sync withdrawals list from lastSynced to current head block
-	// needs to sync on application start
-	if head.Number.Uint64() != lastSynced {
-		syncToHeadParallel(ctx, client, lastSynced, head.Number, retryQ)
-	}
-
-	// goroutine that syncs new blocks every minute
-	// shares parent context and will stop on parent context cancel function call on main
-	go func(ctx context.Context) {
-		for {
-			select {
-			case <-time.Tick(time.Minute * 1):
-				head, err := client.HeaderByNumber(ctx, nil)
-				if err != nil || head == nil {
-					log.Errorf("can't get head: %s", err.Error())
-					continue
+func Run(ctx context.Context, client *ethclient.Client, periods []uint64) {
+	for _, p := range periods {
+		go func(ctx context.Context, client *ethclient.Client, period uint64) {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.Tick(time.Duration(period) * time.Second):
+					accounts, err := db.GetByClaimFrequency(ctx, period)
+					if err != nil {
+						// TODO:
+						log.Errorf("can't get accounts from db: %s", err.Error())
+						continue
+					}
+					if len(accounts) == 0 {
+						continue
+					}
+					if err := claimBatches(client, accountsToAddresses(accounts)); err != nil {
+						// TODO: add retry logic ?
+						log.Errorf("can't claim withdrawals: %s", err.Error())
+						continue
+					}
 				}
-				syncToHeadParallel(ctx, client, lastSynced, head.Number, retryQ)
-			case <-ctx.Done():
-				return
 			}
-		}
-	}(ctx)
-
-	// claims collected withdrawals every hour
-	for {
-		select {
-		// TODO: make time configurable ?
-		case <-time.Tick(24 * time.Hour):
-			// lock here to prevent races and make interaction with withdrawals list threadsafe
-			// i.e. no other goroutines able to add new withdrawals to the list during claim and flushing
-			mux.Lock()
-			if err := claimBatches(client); err != nil {
-				log.Errorf("can't claim batches: %s", err.Error())
-				mux.Unlock()
-				continue
-			}
-			// flush collected withdrawal accounts list
-			withdrawals = make(map[common.Address]struct{}, 0)
-
-			if err := writeLastSynced(lastSynced); err != nil {
-				mux.Unlock()
-				continue
-			}
-			//
-			metrics.Commit()
-			mux.Unlock()
-
-		case <-ctx.Done():
-			return
-		}
+		}(ctx, client, p)
 	}
 }
 
@@ -159,7 +96,11 @@ func main() {
 	ctx, stop := context.WithCancel(context.Background())
 
 	go metrics.serve(ctx)
-	go Run(ctx, client)
+	periods, err := db.GetClaimPeriods(ctx)
+	if err != nil {
+		log.Fatal("can't get claim periods from db")
+	}
+	go Run(ctx, client, periods)
 
 	c := make(chan os.Signal, 1)
 	// We'll accept graceful shutdowns when quit via SIGINT (Ctrl+C)

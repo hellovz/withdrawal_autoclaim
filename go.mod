@@ -1,4 +1,4 @@
-module github.com/withdrawal-autoclaim
+module github.com/gnosischain/withdrawal_autoclaim
 
 go 1.20
 

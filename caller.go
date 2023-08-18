@@ -10,24 +10,23 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/gnosischain/withdrawal_autoclaim/bindings"
 	log "github.com/sirupsen/logrus"
-	"github.com/withdrawal-autoclaim/bindings"
 )
 
 // claimBatches сalls claim for every batch of withdrawal addresses
 // where number of batches == (withdrawal address / BatchSize).
-func claimBatches(client *ethclient.Client) error {
-	withdrawalAddrs := withdrawals.toSlice()
-	batches := len(withdrawalAddrs) / BatchSize
+func claimBatches(client *ethclient.Client, addrs []common.Address) error {
+	batches := len(addrs) / BatchSize
 
 	for i := 0; i <= batches; i++ {
 		var list []common.Address
 
-		if len(withdrawalAddrs) < BatchSize {
-			list = withdrawalAddrs
+		if len(addrs) < BatchSize {
+			list = addrs
 		} else {
-			list = withdrawalAddrs[:BatchSize]
-			withdrawalAddrs = withdrawalAddrs[BatchSize:]
+			list = addrs[:BatchSize]
+			addrs = addrs[BatchSize:]
 		}
 		if err := claim(client, list); err != nil {
 			return fmt.Errorf("can't claim withdrawals: %w", err)
@@ -35,7 +34,7 @@ func claimBatches(client *ethclient.Client) error {
 	}
 	// sets addressesCounter (withdrawalAddresses) metric
 	// to the number of unique withdrawal addresses
-	metrics.addressesCounter = uint64(len(withdrawalAddrs))
+	metrics.addressesCounter = uint64(len(addrs))
 	return nil
 }
 
