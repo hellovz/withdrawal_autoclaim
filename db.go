@@ -24,4 +24,6 @@ type DB interface {
 	WriteBatch(context.Context, []*Account) error
 }
 
-func NewDB() (DB, error)
+func NewDB() (DB, error) {
+	return nil, nil
+}

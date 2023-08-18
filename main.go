@@ -15,8 +15,6 @@ import (
 const rpcUrl = "https://rpc.gnosischain.com"
 
 var (
-	lastSynced uint64
-
 	BatchSize int
 
 	DepositContractAddress common.Address
