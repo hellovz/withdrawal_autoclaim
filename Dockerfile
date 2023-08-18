@@ -11,6 +11,6 @@ FROM alpine:latest
 
 WORKDIR /app
 
-COPY --from=build /build/withdrawal-autoclaim .
+COPY --from=build /build/withdrawal_autoclaim .
 
-ENTRYPOINT ["./withdrawal-autoclaim"]
+ENTRYPOINT ["./withdrawal_autoclaim"]
